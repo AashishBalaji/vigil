@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
+
+model/artifacts/*.csv
+model/artifacts/*.joblib
+model/artifacts/*.json
+!model/artifacts/.gitkeep
+
+.DS_Store

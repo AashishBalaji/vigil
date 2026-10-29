@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Vigil — AML Alert Triage</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Vigil</h1>
+    <p class="subtitle">Explainable AML alert triage</p>
+    <label class="api-base-label">
+      API base
+      <input id="api-base" type="text" value="http://127.0.0.1:8010" />
+    </label>
+  </header>
+
+  <main>
+    <section id="queue-panel">
+      <div class="panel-header">
+        <h2>Open queue</h2>
+        <button id="refresh-btn">Refresh</button>
+      </div>
+      <table id="queue-table">
+        <thead>
+          <tr><th>ID</th><th>Customer</th><th>Typology</th><th>Priority score</th><th>Opened</th></tr>
+        </thead>
+        <tbody id="queue-body"></tbody>
+      </table>
+      <p id="queue-empty" class="empty-state" hidden>No open alerts.</p>
+    </section>
+
+    <section id="detail-panel">
+      <h2>Alert detail</h2>
+      <div id="detail-placeholder" class="empty-state">Select an alert from the queue to review it.</div>
+
+      <div id="detail-content" hidden>
+        <div class="detail-head">
+          <div>
+            <span class="label">Customer</span>
+            <span id="detail-customer"></span>
+          </div>
+          <div>
+            <span class="label">Typology</span>
+            <span id="detail-typology"></span>
+          </div>
+          <div>
+            <span class="label">Priority score</span>
+            <span id="detail-score" class="score-badge"></span>
+          </div>
+        </div>
+
+        <h3>Why this score — top contributing features</h3>
+        <p class="hint">Each bar is that feature's SHAP contribution to the model's score. Positive pushes the alert
+          higher-priority; negative pushes it toward benign.</p>
+        <div id="explanation-bars"></div>
+
+        <h3>Raw features</h3>
+        <table id="raw-features-table"><tbody></tbody></table>
+
+        <h3>Record disposition</h3>
+        <form id="disposition-form">
+          <label>
+            Decision
+            <select id="decision-select" required>
+              <option value="">Select…</option>
+              <option value="TRUE_POSITIVE">True positive</option>
+              <option value="FALSE_POSITIVE">False positive</option>
+              <option value="ESCALATED">Escalate</option>
+            </select>
+          </label>
+          <label>
+            Rationale
+            <textarea id="rationale-input" required placeholder="Why this decision — referenced evidence, typology fit, etc."></textarea>
+          </label>
+          <label>
+            Analyst
+            <input id="analyst-input" type="text" required placeholder="your.name" />
+          </label>
+          <button type="submit">Submit disposition</button>
+          <p id="disposition-status" class="status-msg"></p>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
