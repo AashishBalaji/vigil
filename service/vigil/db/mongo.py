@@ -43,6 +43,22 @@ def get_evidence(alert_id: int) -> dict[str, Any] | None:
     return _evidence_collection().find_one({"_id": alert_id})
 
 
-def reset_client_cache() -> None:
-    """Test-only: forces a fresh client on the next call (new mongomock instance per test)."""
-    _client.cache_clear()
+def clear_all_evidence() -> None:
+    """
+    Test-only. An earlier version of this file instead exposed
+    `reset_client_cache()`, which just cleared the lru_cache so the
+    *next* call built a fresh client object -- that happened to also
+    wipe all data when the backend was mongomock, because a new
+    mongomock.MongoClient() is a fresh in-memory database. Against a
+    real mongod, a new MongoClient() reconnects to the *same*
+    persistent data, so nothing was actually cleared -- and Postgres's
+    `TRUNCATE ... RESTART IDENTITY` between tests means alert IDs
+    restart at 1 every test, so the second test to ingest an alert
+    collided on `_id: 1` with a document the first test had already
+    left behind: `DuplicateKeyError`, caught by CI's real-Mongo job,
+    never visible locally where mongomock was masking it. This
+    function does the thing that was actually needed instead:
+    deletes every document, identically regardless of which backend
+    is live.
+    """
+    _evidence_collection().delete_many({})

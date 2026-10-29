@@ -31,5 +31,8 @@ def clean_state():
     postgres.init_schema()
     with postgres.cursor() as cur:
         cur.execute("TRUNCATE dispositions, alerts RESTART IDENTITY")
-    mongo.reset_client_cache()
+    # Must actually delete Mongo's documents, not just reset the
+    # client object -- see the comment on clear_all_evidence() for
+    # why the two are not the same thing against a real mongod.
+    mongo.clear_all_evidence()
     yield

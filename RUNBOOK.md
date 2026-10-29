@@ -97,3 +97,29 @@ be" — there's no exception, no 500, nothing a log line would surface.
    real deployment, retrain against the accumulated real disposition
    history) and redeploy, following the restart step in failure mode
    #1 above so the explainer cache doesn't go stale.
+
+## 5. Mongo evidence `_id` collisions after a Postgres identity reset
+
+**Symptom:** `POST /alerts` returns `500` with a `DuplicateKeyError`
+on `alert_evidence`'s `_id` field.
+
+**What actually happened here:** this is not a hypothetical — it's
+the real root cause of this project's own CI failing on its third
+push. `alert_evidence` documents use the Postgres `alerts.id` as their
+Mongo `_id`. The test suite truncates Postgres with `RESTART IDENTITY`
+between tests so IDs restart at `1` every time, but the test fixture
+only reset the *client object* in Mongo, not its actual data — against
+`mongomock`, a new client object happens to mean a fresh in-memory
+database, which silently masked the bug for every local run; against
+a real `mongod` in CI, the old documents were still there, and the
+second test to ingest an alert collided on `_id: 1`.
+
+**Response:** this exact case is fixed — the test fixture now calls
+`mongo.clear_all_evidence()`, which actually deletes Mongo's documents
+rather than relying on a client-cache side effect. The general
+version of this failure mode, outside tests, would be: never reset
+Postgres's sequence (`ALTER SEQUENCE ... RESTART`, or a
+`RESTART IDENTITY` truncate) against a Mongo instance that still holds
+evidence for the IDs being reused. If a Postgres restore or migration
+ever needs to do that, clear the corresponding Mongo collection in the
+same operation, not as an afterthought.
