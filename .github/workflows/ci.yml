@@ -9,6 +9,18 @@
 # `python -m pytest` does -- service/pytest.ini's `pythonpath = .`
 # is in place from the start this time rather than discovered as a
 # CI failure.
+#
+# Mongo's service container deliberately has no `--health-cmd`: the
+# first attempt at this workflow used `mongosh --eval ...` as the
+# health check, and the run failed with no usable log detail (GitHub's
+# log-blob host is blocked by this project's sandbox proxy, so the
+# failure had to be root-caused from the workflow's own structure
+# rather than its output). Whether the official `mongo` image actually
+# bundles `mongosh` turns out to depend on the tag and isn't something
+# worth gambling CI on, so readiness is instead polled from outside
+# with the same real pymongo client the service uses -- the "Wait for
+# Mongo" step below -- which needs nothing assumed to be present
+# inside the container image.
 name: CI
 
 on:
@@ -37,11 +49,6 @@ jobs:
       mongo:
         image: mongo:7
         ports: ["27017:27017"]
-        options: >-
-          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,6 +58,23 @@ jobs:
           cache-dependency-path: service/requirements-dev.txt
 
       - run: pip install -r service/requirements-dev.txt
+
+      - name: Wait for Mongo to accept real connections
+        run: |
+          python - <<'EOF'
+          import sys, time
+          import pymongo
+          deadline = time.time() + 60
+          while time.time() < deadline:
+              try:
+                  pymongo.MongoClient("mongodb://localhost:27017", serverSelectionTimeoutMS=2000).admin.command("ping")
+                  print("Mongo is up")
+                  sys.exit(0)
+              except Exception as exc:
+                  print(f"waiting for Mongo: {exc}")
+                  time.sleep(2)
+          sys.exit("Mongo never became reachable")
+          EOF
 
       - name: Generate the synthetic alert dataset
         run: python model/generate_data.py
@@ -73,6 +97,15 @@ jobs:
           name: model-artifacts
           path: model/artifacts/
 
+      - name: Show service container logs on failure
+        if: failure()
+        run: |
+          docker ps -a
+          for c in $(docker ps -aq); do
+            echo "== logs: $(docker inspect --format '{{.Config.Image}}' "$c") =="
+            docker logs "$c" 2>&1 | tail -100
+          done
+
   ui-e2e:
     name: Dashboard — real browser against the real running service
     runs-on: ubuntu-latest
@@ -93,11 +126,6 @@ jobs:
       mongo:
         image: mongo:7
         ports: ["27017:27017"]
-        options: >-
-          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -108,6 +136,23 @@ jobs:
 
       - run: pip install -r service/requirements-dev.txt playwright==1.49.0
       - run: playwright install --with-deps chromium
+
+      - name: Wait for Mongo to accept real connections
+        run: |
+          python - <<'EOF'
+          import sys, time
+          import pymongo
+          deadline = time.time() + 60
+          while time.time() < deadline:
+              try:
+                  pymongo.MongoClient("mongodb://localhost:27017", serverSelectionTimeoutMS=2000).admin.command("ping")
+                  print("Mongo is up")
+                  sys.exit(0)
+              except Exception as exc:
+                  print(f"waiting for Mongo: {exc}")
+                  time.sleep(2)
+          sys.exit("Mongo never became reachable")
+          EOF
 
       - name: Generate data + train model
         run: |
