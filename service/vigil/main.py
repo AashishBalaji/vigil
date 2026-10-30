@@ -5,30 +5,36 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from vigil.auth import seed_demo_users
+from vigil.config import settings
 from vigil.db import mongo, postgres
 from vigil.routers.alerts import router as alerts_router
+from vigil.routers.auth import router as auth_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     postgres.init_schema()
+    seed_demo_users()
     yield
 
 
 app = FastAPI(title="Vigil — Explainable AML Alert Triage", lifespan=lifespan)
 
-# The dashboard is a plain static HTML/CSS/JS page served from a
-# different origin during local development (file:// or a simple
-# static server); CORS is wide open here deliberately, same caveat as
-# any demo project -- a real deployment would scope this to the
-# dashboard's actual origin.
+# Scoped to the dashboard's actual origin(s), read from
+# VIGIL_CORS_ORIGINS (see config.py for the defaults this project
+# actually serves the dashboard from). An earlier version of this
+# file used allow_origins=["*"] as a local-dev shortcut -- that's a
+# real gap for anything that will ever run outside a laptop, not a
+# cosmetic caveat, so it's fixed rather than just documented.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(alerts_router)
 
 
@@ -40,6 +46,8 @@ def health():
     have reported healthy right through failure mode #3 in
     RUNBOOK.md (a dependency outage that ingestion fails loudly on,
     but that this endpoint alone would have stayed silent about).
+    Deliberately not behind auth -- a monitoring probe shouldn't need
+    a bearer token to ask "are you up".
     """
     checks = {"postgres": "ok", "mongo": "ok"}
     try:

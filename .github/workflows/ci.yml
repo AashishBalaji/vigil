@@ -78,6 +78,9 @@ jobs:
           VIGIL_MONGO_BACKEND: real
           VIGIL_MONGO_URI: mongodb://localhost:27017
           VIGIL_MODEL_PATH: ../model/artifacts/model.joblib
+          # CI-only secret -- never the same value a real deployment
+          # would use, and never reused outside this workflow.
+          VIGIL_JWT_SECRET: ci-test-secret-not-for-reuse
         run: |
           set -o pipefail
           {
@@ -206,6 +209,8 @@ jobs:
           VIGIL_MONGO_BACKEND: real
           VIGIL_MONGO_URI: mongodb://localhost:27017
           VIGIL_MODEL_PATH: ../model/artifacts/model.joblib
+          VIGIL_JWT_SECRET: ci-test-secret-not-for-reuse
+          VIGIL_CORS_ORIGINS: http://127.0.0.1:8011
         run: |
           nohup uvicorn vigil.main:app --host 127.0.0.1 --port 8010 > /tmp/api.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:8010/health && break; sleep 1; done

@@ -23,7 +23,34 @@ troubleshooting and mentoring).
 | Machine learning and data analysis | A real trained `GradientBoostingClassifier`, honest train/val/test metrics, and an operational KPI (queue-volume reduction at a fixed recall target) rather than bare accuracy |
 | HTML/CSS/JS | A plain analyst dashboard, no framework — matching the JD's own stated stack |
 | Git | Normal commit discipline |
-| "Support": troubleshooting, mentoring | `RUNBOOK.md` (4 real failure modes, found or anticipated while building this) and `CONTRIBUTING.md` (the PR/review checklist this project actually follows) |
+| "Support": troubleshooting, mentoring | `RUNBOOK.md` (5 real failure modes, found or anticipated while building this) and `CONTRIBUTING.md` (the PR/review checklist this project actually follows) |
+
+## Auth, CORS, and connection pooling
+
+An earlier version of this project ran with no authentication, a
+wide-open CORS policy (`allow_origins=["*"]`), and a fresh
+connect/close on every Postgres call — all three documented plainly
+as weaknesses rather than hidden. They've since been fixed for real,
+not just reworded in the docs:
+
+- **Authentication.** Every `/alerts*` endpoint now requires a bearer
+  token from `POST /auth/login` (`vigil/auth.py`, `vigil/routers/auth.py`).
+  Two demo accounts are seeded idempotently on every startup —
+  `analyst1` / `analyst1-pass` (role `analyst`) and `reviewer1` /
+  `reviewer1-pass` (role `reviewer`) — named plainly here because this
+  is a portfolio demo with no real identity system behind it, not a
+  hidden default a real deployment would silently inherit. The
+  disposition endpoint's `analyst` field now comes from the
+  authenticated token, not a free-text field the caller could set to
+  any name.
+- **CORS.** Scoped to `VIGIL_CORS_ORIGINS` (comma-separated), defaulting
+  to the two ways this project is actually served locally. A disallowed
+  origin gets a real `400`, not a silently-permissive wildcard.
+- **Connection pooling.** `vigil/db/postgres.py` now holds a
+  `psycopg2.pool.ThreadedConnectionPool` (bounds via `VIGIL_PG_POOL_MIN`
+  /`VIGIL_PG_POOL_MAX`, default 2/20) instead of opening and closing a
+  connection per call — the 10-way concurrent-disposition test exercises
+  this pool under genuine concurrent load, not just the happy path.
 
 ## Layout
 
@@ -57,11 +84,14 @@ pip install -r service/requirements-dev.txt
 python model/generate_data.py
 python model/train.py          # writes model.joblib + metrics.json
 
-cd service && pytest -v        # 12 tests, against a real local Postgres (see conftest.py)
+cd service && pytest -v        # 15 tests, against a real local Postgres (see conftest.py)
 
 uvicorn vigil.main:app --reload --port 8010   # from service/, with VIGIL_* env vars set
 python3 -m http.server 8011 --directory ../dashboard   # separately, for the UI
 ```
+
+Open `http://127.0.0.1:8011` and sign in with `analyst1` / `analyst1-pass`
+(see "Auth, CORS, and connection pooling" above for both demo accounts).
 
 See `RUNBOOK.md` for the failure modes this project is built to
 withstand, and `model/artifacts/metrics.json` (after training) for

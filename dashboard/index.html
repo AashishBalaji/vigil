@@ -13,9 +13,29 @@
       API base
       <input id="api-base" type="text" value="http://127.0.0.1:8010" />
     </label>
+    <div id="session-info" class="session-info" hidden>
+      Signed in as <strong id="session-username"></strong> (<span id="session-role"></span>)
+      <button id="logout-btn" type="button">Log out</button>
+    </div>
   </header>
 
-  <main>
+  <section id="login-panel">
+    <h2>Sign in</h2>
+    <form id="login-form">
+      <label>
+        Username
+        <input id="login-username" type="text" required autocomplete="username" />
+      </label>
+      <label>
+        Password
+        <input id="login-password" type="password" required autocomplete="current-password" />
+      </label>
+      <button type="submit">Sign in</button>
+      <p id="login-status" class="status-msg"></p>
+    </form>
+  </section>
+
+  <main id="app-main" hidden>
     <section id="queue-panel">
       <div class="panel-header">
         <h2>Open queue</h2>
@@ -73,10 +93,8 @@
             Rationale
             <textarea id="rationale-input" required placeholder="Why this decision — referenced evidence, typology fit, etc."></textarea>
           </label>
-          <label>
-            Analyst
-            <input id="analyst-input" type="text" required placeholder="your.name" />
-          </label>
+          <p class="hint">Recorded under your signed-in identity — no longer a free-text field anyone could type any
+            name into.</p>
           <button type="submit">Submit disposition</button>
           <p id="disposition-status" class="status-msg"></p>
         </form>

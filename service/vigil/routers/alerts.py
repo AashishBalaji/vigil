@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from vigil.auth import CurrentUser, get_current_user
 from vigil.db import mongo, postgres
 from vigil.schemas import AlertDetailOut, AlertIn, AlertOut, DispositionIn, DispositionOut
 from vigil.scoring import score_alert
@@ -22,7 +23,7 @@ def _serialize_alert(row: dict) -> dict:
 
 
 @router.post("/alerts", response_model=AlertOut, status_code=201)
-def ingest_alert(alert: AlertIn):
+def ingest_alert(alert: AlertIn, _user: CurrentUser = Depends(get_current_user)):
     score, explanation = score_alert(alert.features)
     alert_id = postgres.insert_alert(alert.customer_id, alert.typology_hint, score)
     mongo.store_evidence(
@@ -36,13 +37,13 @@ def ingest_alert(alert: AlertIn):
 
 
 @router.get("/alerts", response_model=list[AlertOut])
-def list_queue(status: str = "OPEN", limit: int = 100):
+def list_queue(status: str = "OPEN", limit: int = 100, _user: CurrentUser = Depends(get_current_user)):
     rows = postgres.list_queue(status=status, limit=limit)
     return [_serialize_alert(r) for r in rows]
 
 
 @router.get("/alerts/{alert_id}", response_model=AlertDetailOut)
-def get_alert_detail(alert_id: int):
+def get_alert_detail(alert_id: int, _user: CurrentUser = Depends(get_current_user)):
     row = postgres.get_alert(alert_id)
     if row is None:
         raise HTTPException(status_code=404, detail="alert not found")
@@ -56,7 +57,7 @@ def get_alert_detail(alert_id: int):
 
 
 @router.post("/alerts/{alert_id}/disposition", response_model=DispositionOut, status_code=201)
-def record_disposition(alert_id: int, disposition: DispositionIn):
+def record_disposition(alert_id: int, disposition: DispositionIn, user: CurrentUser = Depends(get_current_user)):
     row = postgres.get_alert(alert_id)
     if row is None:
         raise HTTPException(status_code=404, detail="alert not found")
@@ -65,7 +66,10 @@ def record_disposition(alert_id: int, disposition: DispositionIn):
             alert_id=alert_id,
             decision=disposition.decision,
             rationale=disposition.rationale,
-            analyst=disposition.analyst,
+            # The authenticated username, not a value the caller typed
+            # into the request body -- this is the whole point of the
+            # auth work: "who decided this" is now a real identity.
+            analyst=user.username,
         )
     except postgres.AlreadyDecidedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

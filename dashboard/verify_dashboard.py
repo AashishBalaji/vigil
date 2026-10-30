@@ -8,13 +8,16 @@ This is the exact script that caught a real bug during development:
 an earlier version of app.js hid the detail panel in the same tick it
 showed the "Disposition recorded" confirmation, so the message was
 never actually visible to anyone -- this script's wait_for_selector on
-the confirmation text is what surfaced it.
+the confirmation text is what surfaced it. It now also exercises the
+real login flow added when auth was wired in -- both the API-level
+token (for seeding the alert) and the dashboard's own login form.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 import urllib.request
 
 from playwright.sync_api import sync_playwright
@@ -37,17 +40,31 @@ TP_PROFILE = {
 }
 
 
-def ingest(customer_id: str) -> dict:
+def login_for_token() -> str:
+    body = urllib.parse.urlencode({"username": "analyst1", "password": "analyst1-pass"}).encode()
+    req = urllib.request.Request(
+        f"{API}/auth/login", data=body, headers={"Content-Type": "application/x-www-form-urlencoded"}
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.load(resp)["access_token"]
+
+
+def ingest(token: str, customer_id: str) -> dict:
     body = json.dumps(
         {"customer_id": customer_id, "typology_hint": "structuring", "features": TP_PROFILE}
     ).encode()
-    req = urllib.request.Request(f"{API}/alerts", data=body, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        f"{API}/alerts",
+        data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+    )
     with urllib.request.urlopen(req) as resp:
         return json.load(resp)
 
 
 def main() -> None:
-    alert = ingest("CUST-VERIFY-001")
+    token = login_for_token()
+    alert = ingest(token, "CUST-VERIFY-001")
     print("ingested alert:", alert["id"], "score:", alert["score"])
 
     with sync_playwright() as p:
@@ -58,6 +75,16 @@ def main() -> None:
 
         page.goto(DASH)
         page.fill("#api-base", API)
+
+        # Real login through the dashboard's own form, not a token
+        # injected behind its back -- this is the same path an actual
+        # analyst would use.
+        page.fill("#login-username", "analyst1")
+        page.fill("#login-password", "analyst1-pass")
+        page.click("#login-form button[type=submit]")
+        page.wait_for_selector("#app-main:not([hidden])")
+        print("signed in as:", page.locator("#session-username").inner_text())
+
         page.click("#refresh-btn")
         page.wait_for_selector("tr.queue-row")
         rows = page.locator("tr.queue-row")
@@ -76,8 +103,7 @@ def main() -> None:
 
         page.select_option("#decision-select", "TRUE_POSITIVE")
         page.fill("#rationale-input", "verified via playwright e2e check")
-        page.fill("#analyst-input", "e2e-check")
-        page.click("button[type=submit]")
+        page.click("#disposition-form button[type=submit]")
         page.wait_for_selector("#disposition-status.ok")
         print("disposition status:", page.locator("#disposition-status").inner_text())
 

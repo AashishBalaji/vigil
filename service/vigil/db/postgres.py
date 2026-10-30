@@ -6,28 +6,65 @@ from typing import Iterator
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 
 from vigil.config import settings
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
 
+# A single process-wide pool, created lazily on first use rather than
+# at import time -- tests and scripts that override VIGIL_POSTGRES_DSN
+# via os.environ before importing vigil.db.postgres still get a pool
+# built against the DSN they actually set, not whatever was live at
+# import time.
+_pool: psycopg2.pool.ThreadedConnectionPool | None = None
 
-def get_connection():
-    return psycopg2.connect(settings.postgres_dsn)
+
+def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
+    global _pool
+    if _pool is None:
+        _pool = psycopg2.pool.ThreadedConnectionPool(
+            settings.postgres_pool_min,
+            settings.postgres_pool_max,
+            dsn=settings.postgres_dsn,
+        )
+    return _pool
+
+
+def reset_pool() -> None:
+    """
+    Test-only. Closes and discards the pool so the next call rebuilds
+    one against whatever VIGIL_POSTGRES_DSN is current -- mirrors the
+    same "don't let a cached object outlive the thing it was built
+    from" lesson this project already learned once with Mongo's
+    client cache (see mongo.py's clear_all_evidence docstring).
+    """
+    global _pool
+    if _pool is not None:
+        _pool.closeall()
+        _pool = None
+
+
+@contextmanager
+def _pooled_connection():
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        yield conn
+    finally:
+        pool.putconn(conn)
 
 
 @contextmanager
 def cursor() -> Iterator[psycopg2.extras.DictCursor]:
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            yield cur
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    with _pooled_connection() as conn:
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                yield cur
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def init_schema() -> None:
@@ -83,7 +120,7 @@ def record_disposition(alert_id: int, decision: str, rationale: str, analyst: st
     """
     Atomically flips an alert's status from OPEN to a terminal state and
     appends the audit-trail row, in one transaction. The UPDATE is
-    conditioned on `status = 'OPEN'` and we check `cur.rowcount` --
+    conditioned on `status = 'OPEN'` and we check the fetched row --
     exactly the same check-and-act-as-one-statement pattern used for
     the governance gate elsewhere in this portfolio, so two analysts
     racing to decide the same alert can't both "win": the second one's
@@ -91,35 +128,58 @@ def record_disposition(alert_id: int, decision: str, rationale: str, analyst: st
     already decided, instead of silently overwriting the first
     decision or leaving two conflicting disposition rows.
     """
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute(
-                """
-                UPDATE alerts
-                SET status = %s, decided_at = now()
-                WHERE id = %s AND status = 'OPEN'
-                RETURNING id
-                """,
-                (decision, alert_id),
-            )
-            updated = cur.fetchone()
-            if updated is None:
-                raise AlreadyDecidedError(f"alert {alert_id} is not OPEN (already decided or does not exist)")
+    with _pooled_connection() as conn:
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                cur.execute(
+                    """
+                    UPDATE alerts
+                    SET status = %s, decided_at = now()
+                    WHERE id = %s AND status = 'OPEN'
+                    RETURNING id
+                    """,
+                    (decision, alert_id),
+                )
+                updated = cur.fetchone()
+                if updated is None:
+                    raise AlreadyDecidedError(f"alert {alert_id} is not OPEN (already decided or does not exist)")
 
-            cur.execute(
-                """
-                INSERT INTO dispositions (alert_id, decision, rationale, analyst)
-                VALUES (%s, %s, %s, %s)
-                RETURNING *
-                """,
-                (alert_id, decision, rationale, analyst),
-            )
-            disposition = dict(cur.fetchone())
-        conn.commit()
-        return disposition
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+                cur.execute(
+                    """
+                    INSERT INTO dispositions (alert_id, decision, rationale, analyst)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING *
+                    """,
+                    (alert_id, decision, rationale, analyst),
+                )
+                disposition = dict(cur.fetchone())
+            conn.commit()
+            return disposition
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def create_user(username: str, password_hash: str, role: str) -> None:
+    """
+    Idempotent on username -- safe to call on every startup for the
+    small set of demo accounts this project seeds (see auth.py), so a
+    restart never fails on a duplicate-key error for a user that's
+    already there.
+    """
+    with cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO users (username, password_hash, role)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (username) DO NOTHING
+            """,
+            (username, password_hash, role),
+        )
+
+
+def get_user_by_username(username: str) -> dict | None:
+    with cursor() as cur:
+        cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+        row = cur.fetchone()
+        return dict(row) if row else None

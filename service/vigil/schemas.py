@@ -35,9 +35,13 @@ class AlertDetailOut(AlertOut):
 
 
 class DispositionIn(BaseModel):
+    # No `analyst` field here anymore -- it used to be free text the
+    # caller supplied, which meant anyone could record a decision
+    # under any name. The analyst identity now comes from the
+    # authenticated bearer token (see routers/alerts.py), not the
+    # request body.
     decision: Literal["TRUE_POSITIVE", "FALSE_POSITIVE", "ESCALATED"]
     rationale: str
-    analyst: str
 
 
 class DispositionOut(BaseModel):
@@ -47,3 +51,9 @@ class DispositionOut(BaseModel):
     rationale: str
     analyst: str
     decided_at: str
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str
+    role: str

@@ -3,6 +3,17 @@ const queueBody = document.getElementById("queue-body");
 const queueEmpty = document.getElementById("queue-empty");
 const refreshBtn = document.getElementById("refresh-btn");
 
+const loginPanel = document.getElementById("login-panel");
+const loginForm = document.getElementById("login-form");
+const loginUsername = document.getElementById("login-username");
+const loginPassword = document.getElementById("login-password");
+const loginStatus = document.getElementById("login-status");
+const appMain = document.getElementById("app-main");
+const sessionInfo = document.getElementById("session-info");
+const sessionUsername = document.getElementById("session-username");
+const sessionRole = document.getElementById("session-role");
+const logoutBtn = document.getElementById("logout-btn");
+
 const detailPlaceholder = document.getElementById("detail-placeholder");
 const detailContent = document.getElementById("detail-content");
 const detailCustomer = document.getElementById("detail-customer");
@@ -14,17 +25,122 @@ const rawFeaturesTable = document.querySelector("#raw-features-table tbody");
 const dispositionForm = document.getElementById("disposition-form");
 const decisionSelect = document.getElementById("decision-select");
 const rationaleInput = document.getElementById("rationale-input");
-const analystInput = document.getElementById("analyst-input");
 const dispositionStatus = document.getElementById("disposition-status");
 
 let selectedAlertId = null;
+
+// Per-tab only -- a demo credential belongs to this browser session,
+// not written anywhere durable. Wrapped in try/catch because
+// sessionStorage can throw in some contexts (private windows, etc.);
+// the app just falls back to requiring sign-in again if it's
+// unavailable.
+function saveSession(token, username, role) {
+  try {
+    sessionStorage.setItem("vigil_token", token);
+    sessionStorage.setItem("vigil_username", username);
+    sessionStorage.setItem("vigil_role", role);
+  } catch (_) {
+    /* ignore -- the in-memory copy below still works for this page load */
+  }
+}
+
+function loadSession() {
+  try {
+    const token = sessionStorage.getItem("vigil_token");
+    const username = sessionStorage.getItem("vigil_username");
+    const role = sessionStorage.getItem("vigil_role");
+    if (token && username && role) return { token, username, role };
+  } catch (_) {
+    /* ignore */
+  }
+  return null;
+}
+
+function clearSession() {
+  try {
+    sessionStorage.removeItem("vigil_token");
+    sessionStorage.removeItem("vigil_username");
+    sessionStorage.removeItem("vigil_role");
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+let session = loadSession();
 
 function apiBase() {
   return apiBaseInput.value.replace(/\/$/, "");
 }
 
+function authHeaders() {
+  return session ? { Authorization: `Bearer ${session.token}` } : {};
+}
+
+function showSignedIn() {
+  loginPanel.hidden = true;
+  appMain.hidden = false;
+  sessionInfo.hidden = false;
+  sessionUsername.textContent = session.username;
+  sessionRole.textContent = session.role;
+  loadQueue();
+}
+
+function showSignedOut() {
+  loginPanel.hidden = false;
+  appMain.hidden = true;
+  sessionInfo.hidden = true;
+  selectedAlertId = null;
+}
+
+async function handleUnauthorized() {
+  // The token expired or was rejected -- drop the stale session and
+  // send the analyst back to the login form rather than leaving a
+  // dashboard on screen that silently fails every request.
+  session = null;
+  clearSession();
+  showSignedOut();
+  loginStatus.textContent = "Your session expired — please sign in again.";
+  loginStatus.className = "status-msg err";
+}
+
+loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  loginStatus.textContent = "Signing in…";
+  loginStatus.className = "status-msg";
+
+  const body = new URLSearchParams();
+  body.set("username", loginUsername.value);
+  body.set("password", loginPassword.value);
+
+  const resp = await fetch(`${apiBase()}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+
+  if (!resp.ok) {
+    loginStatus.textContent = "Incorrect username or password.";
+    loginStatus.className = "status-msg err";
+    return;
+  }
+
+  const data = await resp.json();
+  session = { token: data.access_token, username: loginUsername.value, role: data.role };
+  saveSession(session.token, session.username, session.role);
+  loginPassword.value = "";
+  loginStatus.textContent = "";
+  showSignedIn();
+});
+
+logoutBtn.addEventListener("click", () => {
+  session = null;
+  clearSession();
+  showSignedOut();
+});
+
 async function loadQueue() {
-  const resp = await fetch(`${apiBase()}/alerts?status=OPEN`);
+  const resp = await fetch(`${apiBase()}/alerts?status=OPEN`, { headers: authHeaders() });
+  if (resp.status === 401) return handleUnauthorized();
   const alerts = await resp.json();
 
   queueBody.innerHTML = "";
@@ -49,7 +165,8 @@ async function loadQueue() {
 
 async function selectAlert(alertId) {
   selectedAlertId = alertId;
-  const resp = await fetch(`${apiBase()}/alerts/${alertId}`);
+  const resp = await fetch(`${apiBase()}/alerts/${alertId}`, { headers: authHeaders() });
+  if (resp.status === 401) return handleUnauthorized();
   if (!resp.ok) return;
   const alert = await resp.json();
 
@@ -58,10 +175,8 @@ async function selectAlert(alertId) {
   dispositionStatus.textContent = "";
   decisionSelect.value = "";
   rationaleInput.value = "";
-  analystInput.value = "";
   decisionSelect.disabled = false;
   rationaleInput.disabled = false;
-  analystInput.disabled = false;
   dispositionForm.querySelector("button[type=submit]").disabled = false;
 
   detailCustomer.textContent = alert.customer_id;
@@ -104,13 +219,14 @@ dispositionForm.addEventListener("submit", async (event) => {
 
   const resp = await fetch(`${apiBase()}/alerts/${selectedAlertId}/disposition`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({
       decision: decisionSelect.value,
       rationale: rationaleInput.value,
-      analyst: analystInput.value,
     }),
   });
+
+  if (resp.status === 401) return handleUnauthorized();
 
   if (resp.ok) {
     dispositionStatus.textContent = "Disposition recorded.";
@@ -122,7 +238,6 @@ dispositionForm.addEventListener("submit", async (event) => {
     // for the message and found the whole panel already hidden.
     decisionSelect.disabled = true;
     rationaleInput.disabled = true;
-    analystInput.disabled = true;
     dispositionForm.querySelector("button[type=submit]").disabled = true;
     selectedAlertId = null;
     await loadQueue();
@@ -139,4 +254,8 @@ dispositionForm.addEventListener("submit", async (event) => {
 
 refreshBtn.addEventListener("click", loadQueue);
 
-loadQueue();
+if (session) {
+  showSignedIn();
+} else {
+  showSignedOut();
+}

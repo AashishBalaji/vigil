@@ -33,3 +33,16 @@ CREATE TABLE IF NOT EXISTS dispositions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_dispositions_alert_id ON dispositions (alert_id);
+
+-- Real authentication, not a free-text "analyst" field anyone could
+-- type anything into. A disposition's `analyst` column now comes
+-- from the authenticated user's own username (see routers/alerts.py),
+-- not from the request body -- this table is what makes that
+-- identity real rather than self-reported.
+CREATE TABLE IF NOT EXISTS users (
+    id              BIGSERIAL PRIMARY KEY,
+    username        TEXT NOT NULL UNIQUE,
+    password_hash   TEXT NOT NULL,
+    role            TEXT NOT NULL CHECK (role IN ('analyst', 'reviewer')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);

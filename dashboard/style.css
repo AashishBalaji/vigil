@@ -136,7 +136,26 @@ tr.queue-row.selected { background: rgba(79, 140, 255, 0.16); }
 
 form { display: flex; flex-direction: column; gap: 10px; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
-select, textarea, input[type="text"] {
+#login-panel {
+  max-width: 360px;
+  margin: 40px auto;
+}
+
+.session-info {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.session-info button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+select, textarea, input[type="text"], input[type="password"] {
   background: #0f1420;
   border: 1px solid var(--border);
   color: var(--text);
